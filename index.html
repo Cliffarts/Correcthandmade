@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Handmade African Items</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         :root {
             --primary-color: #FF7F00;
@@ -1183,6 +1184,12 @@
     <div class="sync-status" id="syncStatus">Syncing with server...</div>
 
     <script>
+        // Supabase Configuration
+        const SUPABASE_URL = 'https://uwpzqpoapkdqedfvomsasupabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3cHpxcG9hcGtkcWVkZnZvbXNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTI4Mzg0MjUsImV4cCI6MjA2ODQxNDQyNX0.c3OLULKZSgQQng6_j-lf7rW0BBb61A-MYClLDTu1sZI';
+
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
         // Enhanced Configuration
         const config = {
             productsPerPage: 12,
@@ -1509,7 +1516,7 @@
         function updateOnlineStatus() {
             elements.syncStatus.style.display = 'block';
             elements.syncStatus.textContent = state.isOnline ? 
-                'Online - Data saved locally' : 'Offline - Using local data';
+                'Online - Data synced with Supabase' : 'Offline - Using local data';
             elements.syncStatus.className = 'sync-status' + (state.isOnline ? '' : ' offline');
             
             setTimeout(() => {
@@ -1517,16 +1524,21 @@
             }, 3000);
         }
 
-        // Enhanced data loading with better error handling
+        // Enhanced data loading with Supabase integration
         async function loadData() {
             // Show skeleton loading for better UX
             utils.showSkeletonCards();
             
             try {
-                // Load from local storage (always available)
-                loadFromLocalStorage();
+                // Load from Supabase if online
+                if (state.isOnline) {
+                    await loadFromSupabase();
+                } else {
+                    // Fallback to local storage when offline
+                    loadFromLocalStorage();
+                }
                 
-                // Update UI immediately with local data
+                // Update UI immediately with data
                 state.filteredProducts = [...state.products];
                 renderProducts();
                 if (state.isAdmin) {
@@ -1543,11 +1555,54 @@
                 
             } catch (error) {
                 console.error("Error loading data:", error);
-                utils.showToast("Error loading data. Please refresh the page.", 'error');
+                utils.showToast("Error loading data. Using local backup.", 'warning');
+                // Fallback to local storage
+                loadFromLocalStorage();
+                state.filteredProducts = [...state.products];
+                renderProducts();
             }
         }
 
-        // Local storage functions with error handling
+        // Load data from Supabase
+        async function loadFromSupabase() {
+            try {
+                // Fetch products from the 'products' table in Supabase
+                const { data: productsData, error: productsError } = await supabase
+                    .from('products')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (productsError) {
+                    console.error('Error loading products:', productsError);
+                    throw productsError;
+                } else {
+                    state.products = productsData || [];
+                    // Also save to local storage as backup
+                    saveProductsToLocal();
+                }
+
+                // Fetch orders from the 'orders' table in Supabase
+                const { data: ordersData, error: ordersError } = await supabase
+                    .from('orders')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (ordersError) {
+                    console.error('Error loading orders:', ordersError);
+                    // Don't throw error for orders, just log it
+                } else {
+                    state.orders = ordersData || [];
+                    // Also save to local storage as backup
+                    saveOrdersToLocal();
+                }
+
+            } catch (error) {
+                console.error("Error loading from Supabase:", error);
+                throw error;
+            }
+        }
+
+        // Local storage functions with error handling (kept as backup)
         function loadFromLocalStorage() {
             try {
                 const productsData = localStorage.getItem('africanProducts');
@@ -1571,7 +1626,6 @@
                 localStorage.setItem('africanProducts', JSON.stringify(state.products));
             } catch (error) {
                 console.error("Error saving products to localStorage:", error);
-                showStatusMessage("Storage full. Some data may not be saved.", false);
             }
         }
 
@@ -1583,22 +1637,52 @@
             }
         }
 
-        // Enhanced save functions
+        // Enhanced save functions with Supabase integration
         async function saveProducts() {
             try {
+                if (state.isOnline) {
+                    // Save to Supabase
+                    const { error } = await supabase
+                        .from('products')
+                        .upsert(state.products, { onConflict: 'id' });
+
+                    if (error) {
+                        console.error('Error saving products to Supabase:', error);
+                        throw error;
+                    }
+                }
+                
+                // Always save to local storage as backup
                 saveProductsToLocal();
                 showStatusMessage("Products saved successfully!", true);
             } catch (error) {
                 console.error("Error saving products:", error);
-                showStatusMessage("Error saving products. Please try again.", false);
+                // Save to local storage as fallback
+                saveProductsToLocal();
+                showStatusMessage("Products saved locally. Will sync when online.", false);
             }
         }
 
         async function saveOrders() {
             try {
+                if (state.isOnline) {
+                    // Save to Supabase
+                    const { error } = await supabase
+                        .from('orders')
+                        .upsert(state.orders, { onConflict: 'id' });
+
+                    if (error) {
+                        console.error('Error saving orders to Supabase:', error);
+                        throw error;
+                    }
+                }
+                
+                // Always save to local storage as backup
                 saveOrdersToLocal();
             } catch (error) {
                 console.error("Error saving orders:", error);
+                // Save to local storage as fallback
+                saveOrdersToLocal();
             }
         }
 
@@ -1914,7 +1998,7 @@
             elements.imageUpload.value = '';
         }
 
-        // Enhanced product form submission
+        // Enhanced product form submission with Supabase integration
         async function handleProductSubmit(e) {
             e.preventDefault();
             
@@ -1953,23 +2037,25 @@
                 price: Math.round(price), // Ensure integer price
                 description: utils.sanitizeHTML(description),
                 sizes: sizes ? sizes.split(',').map(s => utils.sanitizeHTML(s.trim())).filter(s => s) : [],
-                updatedAt: new Date().toISOString()
+                updated_at: new Date().toISOString()
             };
             
-            // Set createdAt for new products
+            // Set created_at for new products
             if (!state.editMode || !productId) {
-                productData.createdAt = new Date().toISOString();
+                productData.created_at = new Date().toISOString();
                 productData.id = utils.generateId();
+            } else {
+                productData.id = productId;
             }
             
             // Handle image
             if (state.currentProductImage) {
-                productData.imageUrl = state.currentProductImage.url;
+                productData.image_url = state.currentProductImage.url;
             } else if (state.editMode && productId) {
                 // Preserve existing image if in edit mode and no new image was uploaded
                 const existingProduct = state.products.find(p => p.id === productId);
-                if (existingProduct && existingProduct.imageUrl) {
-                    productData.imageUrl = existingProduct.imageUrl;
+                if (existingProduct && existingProduct.image_url) {
+                    productData.image_url = existingProduct.image_url;
                 }
             }
             
@@ -1996,7 +2082,7 @@
                     showStatusMessage("Product added successfully!", true);
                 }
                 
-                // Save to local storage
+                // Save to Supabase and local storage
                 await saveProducts();
                 
                 // Reset form
@@ -2092,8 +2178,8 @@
             const placeholderText = product.name.length > 15 ? 
                 product.name.substring(0, 12) + '...' : product.name;
             
-            const imageHtml = product.imageUrl ? 
-                `<img src="${product.imageUrl}" alt="${utils.sanitizeHTML(product.name)}" class="product-image loaded">` :
+            const imageHtml = product.image_url ? 
+                `<img src="${product.image_url}" alt="${utils.sanitizeHTML(product.name)}" class="product-image loaded">` :
                 `<div class="placeholder-image">${utils.sanitizeHTML(placeholderText)}</div>`;
             
             card.innerHTML = `
@@ -2153,7 +2239,7 @@
             elements.customerName.focus();
         }
 
-        // Enhanced buy request handling
+        // Enhanced buy request handling with Supabase integration
         async function handleBuyRequest(e) {
             e.preventDefault();
             
@@ -2191,15 +2277,15 @@
             // Create order
             const order = {
                 id: utils.generateId(),
-                productId,
-                productName: product.name,
-                productPrice: product.price,
-                customerName: utils.sanitizeHTML(name),
-                customerPhone: utils.sanitizeHTML(phone),
-                customerComment: utils.sanitizeHTML(comment),
+                product_id: productId,
+                product_name: product.name,
+                product_price: product.price,
+                customer_name: utils.sanitizeHTML(name),
+                customer_phone: utils.sanitizeHTML(phone),
+                customer_comment: utils.sanitizeHTML(comment),
                 size: selectedSize,
                 status: 'pending',
-                createdAt: new Date().toISOString(),
+                created_at: new Date().toISOString(),
                 replied: false
             };
             
@@ -2210,7 +2296,7 @@
                 // Add to orders
                 state.orders.unshift(order);
                 
-                // Save to local storage
+                // Save to Supabase and local storage
                 await saveOrders();
                 
                 // Close modal
@@ -2327,7 +2413,7 @@
                     <div class="product-item-info">
                         <h3>${utils.sanitizeHTML(product.name)}</h3>
                         <p>${utils.formatCurrency(product.price)} | ${product.sizes.length > 0 ? product.sizes.join(', ') : 'No sizes'}</p>
-                        <small>Created: ${utils.formatDate(product.createdAt)}</small>
+                        <small>Created: ${utils.formatDate(product.created_at)}</small>
                     </div>
                     <div class="product-actions-admin">
                         <button class="btn edit-btn" data-id="${product.id}">Edit</button>
@@ -2359,13 +2445,13 @@
             elements.productSizes.value = product.sizes.join(', ');
             
             // Handle image
-            if (product.imageUrl) {
-                elements.imagePreview.src = product.imageUrl;
+            if (product.image_url) {
+                elements.imagePreview.src = product.image_url;
                 elements.imagePreview.style.display = 'block';
                 elements.removeImageBtn.style.display = 'inline-block';
                 elements.uploadBtnText.textContent = 'Change Image';
                 state.currentProductImage = {
-                    url: product.imageUrl
+                    url: product.image_url
                 };
             } else {
                 removeImage();
@@ -2380,7 +2466,7 @@
             elements.addProductForm.scrollIntoView({ behavior: 'smooth' });
         }
 
-        // Enhanced delete product
+        // Enhanced delete product with Supabase integration
         async function deleteProduct(productId) {
             const product = state.products.find(p => p.id === productId);
             if (!product) return;
@@ -2422,7 +2508,7 @@
             
             // Sort by date (newest first)
             const sortedOrders = [...state.orders].sort((a, b) => 
-                new Date(b.createdAt) - new Date(a.createdAt));
+                new Date(b.created_at) - new Date(a.created_at));
             
             sortedOrders.forEach(order => {
                 const item = document.createElement('div');
@@ -2430,11 +2516,11 @@
                 
                 // Create the main order info
                 let orderHTML = `
-                    <h3>${utils.sanitizeHTML(order.productName)} (${utils.formatCurrency(order.productPrice)})</h3>
-                    <p><strong>Customer:</strong> ${utils.sanitizeHTML(order.customerName)} | <strong>Phone:</strong> ${utils.sanitizeHTML(order.customerPhone)}</p>
+                    <h3>${utils.sanitizeHTML(order.product_name)} (${utils.formatCurrency(order.product_price)})</h3>
+                    <p><strong>Customer:</strong> ${utils.sanitizeHTML(order.customer_name)} | <strong>Phone:</strong> ${utils.sanitizeHTML(order.customer_phone)}</p>
                     ${order.size !== 'N/A' ? `<p><strong>Size:</strong> ${utils.sanitizeHTML(order.size)}</p>` : ''}
-                    ${order.customerComment ? `<p><strong>Note:</strong> ${utils.sanitizeHTML(order.customerComment)}</p>` : ''}
-                    <small>Requested on ${utils.formatDate(order.createdAt)}</small>
+                    ${order.customer_comment ? `<p><strong>Note:</strong> ${utils.sanitizeHTML(order.customer_comment)}</p>` : ''}
+                    <small>Requested on ${utils.formatDate(order.created_at)}</small>
                 `;
                 
                 // Add replied badge if order has been replied to
@@ -2487,8 +2573,8 @@
             });
         }
 
-        // Handle sending a reply to a customer
-        function handleSendReply(orderId, message) {
+        // Handle sending a reply to a customer with Supabase integration
+        async function handleSendReply(orderId, message) {
             if (!message) {
                 utils.showToast("Please enter a reply message", "error");
                 return;
@@ -2497,28 +2583,33 @@
             const orderIndex = state.orders.findIndex(o => o.id === orderId);
             if (orderIndex === -1) return;
             
-            // Update the order status
-            state.orders[orderIndex].replied = true;
-            state.orders[orderIndex].repliedAt = new Date().toISOString();
-            
-            // Save to local storage
-            saveOrdersToLocal();
-            
-            // Create WhatsApp link
-            const phoneNumber = state.orders[orderIndex].customerPhone.replace(/[^0-9]/g, '');
-            const whatsappLink = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
-            
-            // Open WhatsApp (or show link if it fails)
             try {
-                window.open(whatsappLink, '_blank');
-            } catch (e) {
-                utils.showToast(`Could not open WhatsApp. Here's the message to send: ${message}`, "warning", 10000);
+                // Update the order status
+                state.orders[orderIndex].replied = true;
+                state.orders[orderIndex].replied_at = new Date().toISOString();
+                
+                // Save to Supabase and local storage
+                await saveOrders();
+                
+                // Create WhatsApp link
+                const phoneNumber = state.orders[orderIndex].customer_phone.replace(/[^0-9]/g, '');
+                const whatsappLink = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+                
+                // Open WhatsApp (or show link if it fails)
+                try {
+                    window.open(whatsappLink, '_blank');
+                } catch (e) {
+                    utils.showToast(`Could not open WhatsApp. Here's the message to send: ${message}`, "warning", 10000);
+                }
+                
+                // Re-render orders list
+                renderOrdersList();
+                
+                utils.showToast("Reply sent successfully!", "success");
+            } catch (error) {
+                console.error("Error updating order:", error);
+                utils.showToast("Error updating order status", "error");
             }
-            
-            // Re-render orders list
-            renderOrdersList();
-            
-            utils.showToast("Reply sent successfully!", "success");
         }
 
         // Initialize the app when DOM is loaded
@@ -2538,3 +2629,4 @@
     </script>
 </body>
 </html>
+
